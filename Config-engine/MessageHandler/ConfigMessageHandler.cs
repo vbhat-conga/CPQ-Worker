@@ -26,9 +26,9 @@ namespace Config_engine.Worker.Messagehandler
         private readonly string _adminServiceUrl;
         public ConfigMessageHandler(IHttpClientFactory httpClientFactory, IConfiguration configuration, ILogger<ConfigMessageHandler> logger)
         {
-            _batchSize = 5000;
-            _httpClientFactory = httpClientFactory;
             _configuration = configuration;
+            _batchSize = _configuration.GetValue<int>("BatchSize");
+            _httpClientFactory = httpClientFactory;            
             _pricingStream = _configuration.GetValue<string>("PricingStream") ?? "pricing-stream";
             _adminServiceUrl = _configuration.GetValue<string>("AdiminServiceUrl") ?? "https://localhost:7190/api";
             _logger = logger;

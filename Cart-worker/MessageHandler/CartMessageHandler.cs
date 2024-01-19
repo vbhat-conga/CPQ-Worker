@@ -20,10 +20,10 @@ namespace Cart_Worker.MessageHandler
 
         public CartMessageHandler(ILogger<CartMessageHandler> logger, IHttpClientFactory httpClientFactory, IConfiguration configuration)
         {
-            _batchSize = 5000;
             _logger = logger;
             _httpClientFactory = httpClientFactory;
             _configuration = configuration;
+            _batchSize = _configuration.GetValue<int>("BatchSize");
             _cartServiceUrl = _configuration.GetValue<string>("CartUrl") ?? "https://localhost:7036/api";
         }
         public async Task HandleMessage(List<PricingResponse> pricingResponses, IDatabase database)

@@ -25,9 +25,9 @@ namespace Pricing_Engine.MessageHandler
 
         public PricingMessageHandler(ILogger<PricingMessageHandler> logger, IHttpClientFactory httpClientFactory, IConfiguration configuration)
         {
-            _batchSize = 5000;
             _httpClientFactory = httpClientFactory;
             _configuration = configuration;
+            _batchSize = _configuration.GetValue<int>("BatchSize");
             _cartStream = _configuration.GetValue<string>("CartStream") ?? "cart-stream";
             _adminServiceUrl = _configuration.GetValue<string>("AdiminServiceUrl") ?? "https://localhost:7190/api";
             _logger = logger;
@@ -91,7 +91,7 @@ namespace Pricing_Engine.MessageHandler
                 using HttpClient client = _httpClientFactory.CreateClient();
                 for (var i = 0; i < iteration; i++)
                 {
-                    var itemIds = cartItems.Skip(i).Take(5000).Select(x => x.Product.Id);
+                    var itemIds = cartItems.Skip(i).Take(_batchSize).Select(x => x.Product.Id);
                     var json = new StringContent(
                             JsonSerializer.Serialize(itemIds, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
                             Encoding.UTF8,
