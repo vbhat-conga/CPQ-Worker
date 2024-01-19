@@ -1,0 +1,40 @@
+﻿using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Pricing_Engine.HostedService;
+using Pricing_Engine.MessageHandler;
+using Microsoft.Extensions.Logging;
+
+namespace Pricing_Engine
+{
+    internal class Program
+    {
+        public static IConfigurationRoot Configuration { get; private set; }
+        static void Main(string[] args)
+        {
+            CreateHostBuilder(args).Build().Run();
+        }
+
+        private static IHostBuilder CreateHostBuilder(string[] args) =>
+            Host.CreateDefaultBuilder(args).ConfigureAppConfiguration((hostingContext, config) =>
+            {
+                config
+                .AddJsonFile("appsettings.json", optional: true, reloadOnChange: true)
+                .AddJsonFile("configoverride/appsettings.json", optional: true, reloadOnChange: true)
+                .AddEnvironmentVariables();
+                Configuration = config.Build();
+            })
+          .ConfigureLogging((builder) =>
+          {
+              builder.ClearProviders();
+              builder.AddConsole();
+          })
+          .ConfigureServices((hostingContext, services) =>
+          {
+              services.AddHttpClient();
+              services.AddHostedService<PricingHostedService>();
+              services.AddTransient<IMessageHandler, PricingMessageHandler>();
+
+          });
+    }
+}
