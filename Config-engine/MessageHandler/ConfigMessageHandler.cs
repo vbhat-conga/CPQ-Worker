@@ -89,7 +89,7 @@ namespace Config_engine.Worker.Messagehandler
                 using HttpClient client = _httpClientFactory.CreateClient();
                 for (var i = 0; i < iteration; i++)
                 {
-                    var itemIds = cartItems.Skip(i).Take(_batchSize).Select(x => x.Product.Id.ToString());
+                    var itemIds = cartItems.Skip(i * _batchSize).Take(_batchSize).Select(x => x.Product.Id);
                     var json = new StringContent(
                             JsonSerializer.Serialize(itemIds, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
                             Encoding.UTF8,
@@ -109,7 +109,7 @@ namespace Config_engine.Worker.Messagehandler
                             Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) },
                             PropertyNameCaseInsensitive = true
                         };
-                        var response = await JsonSerializer.DeserializeAsync<ApiResponse<List<ProductData>>>(httpResponse.Content.ReadAsStream(), options)!;
+                        var response = await JsonSerializer.DeserializeAsync<ApiResponse<List<ProductData>>>(await httpResponse.Content.ReadAsStreamAsync(), options)!;
                         if (response != null)
                         {
                             response.Data.ForEach(x => { productList.Add(x); });

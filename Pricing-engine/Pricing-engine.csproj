@@ -12,6 +12,9 @@
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="8.0.0" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.0" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.7.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.7.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.7.0" />
     <PackageReference Include="StackExchange.Redis" Version="2.7.10" />
   </ItemGroup>
 
