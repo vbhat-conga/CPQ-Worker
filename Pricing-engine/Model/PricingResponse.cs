@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace Pricing_Engine.Model
 {
-    internal class PricingResponse
+    internal class PricingResponse:BaseMessage
     {
         public PricingResponse(Guid cartId)
         {

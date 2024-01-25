@@ -1,9 +1,16 @@
 ﻿using Cart_Worker.HostedService;
 using Cart_Worker.MessageHandler;
+using Cart_Worker.Model;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using OpenTelemetry;
+using OpenTelemetry.Exporter;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
+using StackExchange.Redis;
+
 namespace Cart_worker
 {
     internal class Program
@@ -30,9 +37,29 @@ namespace Cart_worker
           })
           .ConfigureServices((hostingContext, services) =>
           {
+              var connection = ConnectionMultiplexer.Connect(hostingContext.Configuration.GetConnectionString("RedisConnectionString") ?? "127.0.0.1:6379");
+              services.AddSingleton<IConnectionMultiplexer>(connection);
               services.AddHttpClient();
               services.AddHostedService<CartHostedService>();
               services.AddTransient<IMessageHandler, CartMessageHandler>();
+              Action<ResourceBuilder> configureResource = r => r.AddService(
+                serviceName: hostingContext.Configuration.GetValue("ServiceName", defaultValue: "cart-worker")!,
+                serviceVersion: typeof(Program).Assembly.GetName().Version?.ToString() ?? "unknown",
+                serviceInstanceId: Environment.MachineName);
+
+              services.AddOpenTelemetry()
+              .WithTracing(builder => builder
+                  .ConfigureResource(configureResource)
+                  .AddSource(Instrumentation.ActivitySourceName)
+                   //.AddConsoleExporter()
+                   .AddOtlpExporter(opts =>
+                   {
+                       opts.Protocol = OtlpExportProtocol.Grpc;
+                       opts.Endpoint = new Uri("http://localhost:4317/api/traces");
+                       opts.ExportProcessorType = ExportProcessorType.Batch;
+                   })
+                   .AddAspNetCoreInstrumentation()
+                   .AddHttpClientInstrumentation());
 
           });
     }

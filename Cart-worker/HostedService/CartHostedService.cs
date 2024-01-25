@@ -16,19 +16,21 @@ namespace Cart_Worker.HostedService
         private readonly string _redisStreamName;
         private readonly IMessageHandler _messageHandler;
         private readonly IConfiguration _configuration;
-        public CartHostedService(ILogger<CartHostedService> logger, IMessageHandler messageHandler, IConfiguration configuration)
+        private readonly IConnectionMultiplexer _connectionMultiplexer;
+        public CartHostedService(ILogger<CartHostedService> logger, IMessageHandler messageHandler, IConfiguration configuration, IConnectionMultiplexer connectionMultiplexer)
         {
             _logger = logger;
             _configuration = configuration;
-            var conString = _configuration.GetConnectionString("RedisConnectionString") ?? "localhost:6379";
-            var redis = ConnectionMultiplexer.Connect(conString);
-            _database = redis.GetDatabase();
+            _connectionMultiplexer = connectionMultiplexer;
+            _database = _connectionMultiplexer.GetDatabase();
             _redisStreamName = _configuration.GetValue<string>("CartStream") ?? "cart-stream";
             _consumerGroupName = _configuration.GetValue<string>("ConsumerGroup") ?? "cart-worker";
             _messageHandler = messageHandler;
-
         }
 
+        // TODO: Proper exception handling
+        // What happens if it fails to do its job?
+        // Code refactoring and duplicate code removal etc.
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             try

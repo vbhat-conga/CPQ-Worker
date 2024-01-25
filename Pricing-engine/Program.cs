@@ -4,6 +4,12 @@ using Microsoft.Extensions.Hosting;
 using Pricing_Engine.HostedService;
 using Pricing_Engine.MessageHandler;
 using Microsoft.Extensions.Logging;
+using StackExchange.Redis;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
+using OpenTelemetry.Exporter;
+using OpenTelemetry;
+using Pricing_Engine.Model;
 
 namespace Pricing_Engine
 {
@@ -31,10 +37,29 @@ namespace Pricing_Engine
           })
           .ConfigureServices((hostingContext, services) =>
           {
+              var connection = ConnectionMultiplexer.Connect(hostingContext.Configuration.GetConnectionString("RedisConnectionString")?? "127.0.0.1:6379");
+              services.AddSingleton<IConnectionMultiplexer>(connection);
               services.AddHttpClient();
               services.AddHostedService<PricingHostedService>();
               services.AddTransient<IMessageHandler, PricingMessageHandler>();
+              Action<ResourceBuilder> configureResource = r => r.AddService(
+                 serviceName: hostingContext.Configuration.GetValue("ServiceName", defaultValue: "pricing-engine")!,
+                 serviceVersion: typeof(Program).Assembly.GetName().Version?.ToString() ?? "unknown",
+                 serviceInstanceId: Environment.MachineName);
 
+              services.AddOpenTelemetry()
+              .WithTracing(builder => builder
+                  .ConfigureResource(configureResource)
+                  .AddSource(Instrumentation.ActivitySourceName)
+                   //.AddConsoleExporter()
+                   .AddOtlpExporter(opts =>
+                   {
+                       opts.Protocol = OtlpExportProtocol.Grpc;
+                       opts.Endpoint = new Uri("http://localhost:4317/api/traces");
+                       opts.ExportProcessorType = ExportProcessorType.Batch;
+                   })
+                   .AddAspNetCoreInstrumentation()
+                   .AddHttpClientInstrumentation());
           });
     }
 }

@@ -6,7 +6,16 @@ using System.Threading.Tasks;
 
 namespace Cart_Worker.Model
 {
-    internal class PricingResponse
+    public class BaseMessage
+    {
+        public Dictionary<string, byte[]> AdditonalInfo { get; set; }
+
+        public BaseMessage()
+        {
+            AdditonalInfo = new();
+        }
+    }
+    internal class PricingResponse: BaseMessage
     {
         public PricingResponse(Guid cartId)
         {

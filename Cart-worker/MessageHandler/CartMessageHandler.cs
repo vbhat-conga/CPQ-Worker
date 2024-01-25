@@ -7,7 +7,10 @@ using System.Text.Json;
 using System.Text;
 using Cart_worker.Model;
 using Microsoft.Extensions.Logging;
-using System.Net.Http.Json;
+using OpenTelemetry.Context.Propagation;
+using System.Diagnostics;
+using OpenTelemetry;
+using Cart_Worker.Helper;
 
 namespace Cart_Worker.MessageHandler
 {
@@ -18,6 +21,8 @@ namespace Cart_Worker.MessageHandler
         private readonly IConfiguration _configuration;
         private readonly string _cartServiceUrl;
         private readonly ILogger<CartMessageHandler> _logger;
+        private readonly ActivitySource _activitySource = new(Instrumentation.ActivitySourceName);
+        private static readonly TextMapPropagator Propagator = Propagators.DefaultTextMapPropagator;
 
         public CartMessageHandler(ILogger<CartMessageHandler> logger, IHttpClientFactory httpClientFactory, IConfiguration configuration)
         {
@@ -31,86 +36,43 @@ namespace Cart_Worker.MessageHandler
         {
             _logger.LogInformation($"started processing a message at {DateTime.Now}");
             var cartItemUpdateRequest = new ConcurrentBag<CartItemUpdateRequest>();
-            //foreach (var message in pricingResponses)
-            //{
-            //    var httpTasks = new List<Task<HttpResponseMessage>>();
-            //    var iteration = Math.Ceiling((decimal)message.CartItems.Count / _batchSize);
-            //    using HttpClient client = _httpClientFactory.CreateClient();         
-            //    for (var i = 0; i < iteration; i++)
-            //    {
-            //        var itemIds = message.CartItems.Skip(i).Take(_batchSize).Select(x => new CartItemUpdateRequest
-            //        {
-            //            CartItemId = x.CartItemId,
-            //            Currency = x.Currency,
-            //            Price = x.Price,
-            //        });
-            //        var json = new StringContent(
-            //                JsonSerializer.Serialize(itemIds, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
-            //                Encoding.UTF8,
-            //                MediaTypeNames.Application.Json);
-            //        httpTasks.Add(client.PutAsync($"{_cartServiceUrl}/cart/{message.CartId}/items", json));
-            //    }
-            //    var httpResponses = await Task.WhenAll(httpTasks);
-            //    _logger.LogInformation($"Received a response from API for cart Id: {message.CartId} at {DateTime.Now}");
-            //    if (httpResponses != null && httpResponses.All(x=>x.IsSuccessStatusCode))
-            //    {
-            //        return;
-            //    }
-            //}
             await Parallel.ForEachAsync(pricingResponses, async (message, _) =>
             {
-                var httpTasks = new List<Task<HttpResponseMessage>>();
-                var iteration = Math.Ceiling((decimal)message.CartItems.Count / _batchSize);
-                using HttpClient client = _httpClientFactory.CreateClient();
-                for (var i = 0; i < iteration; i++)
+                var parentContext = Propagator.Extract(default, message, InstrumentationHelper.ExtractTraceContextFromBasicProperties);
+                Baggage.Current = parentContext.Baggage;
+                using var activity = _activitySource.StartActivity(nameof(HandleMessage), ActivityKind.Internal, parentContext.ActivityContext);
                 {
-                    var itemIds = message.CartItems.Skip(i * _batchSize).Take(_batchSize).Select(x => new CartItemUpdateRequest
+                    var httpTasks = new List<Task<HttpResponseMessage>>();
+                    var iteration = Math.Ceiling((decimal)message.CartItems.Count / _batchSize);
+                    using HttpClient client = _httpClientFactory.CreateClient();
+                    for (var i = 0; i < iteration; i++)
                     {
-                        CartItemId = x.CartItemId,
-                        Currency = x.Currency,
-                        Price = x.Price,
-                    });
-                    var json = new StringContent(
-                            JsonSerializer.Serialize(itemIds, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
-                            Encoding.UTF8,
-                            MediaTypeNames.Application.Json);
-                    httpTasks.Add(client.PutAsync($"{_cartServiceUrl}/cart/{message.CartId}/items", json));
-                }
-                var httpResponses = await Task.WhenAll(httpTasks);
-                _logger.LogInformation($"Received a response from API for cart Id: {message.CartId} at {DateTime.Now}");
-                if (httpResponses != null && httpResponses.All(x => x.IsSuccessStatusCode))
-                {
-                    _logger.LogInformation($"Getting cart status for cart Id: {message.CartId} started at {DateTime.Now}");
-                    var result = await GetCartStatus(message);
-                    _logger.LogInformation($"Received cart status for cart Id: {message.CartId} started at {DateTime.Now}");
+                        var itemIds = message.CartItems.Skip(i * _batchSize).Take(_batchSize).Select(x => new CartItemUpdateRequest
+                        {
+                            CartItemId = x.CartItemId,
+                            Currency = x.Currency,
+                            Price = x.Price,
+                        });
+                        var json = new StringContent(
+                                JsonSerializer.Serialize(itemIds, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+                                Encoding.UTF8,
+                                MediaTypeNames.Application.Json);
+                        httpTasks.Add(client.PutAsync($"{_cartServiceUrl}/cart/{message.CartId}/items", json));
+                    }
+                    var httpResponses = await Task.WhenAll(httpTasks);
+                    _logger.LogInformation($"Received a response from API for cart Id: {message.CartId} at {DateTime.Now}");
+                    if (httpResponses != null && httpResponses.All(x => x.IsSuccessStatusCode))
+                    {
+                        _logger.LogInformation($"Getting cart status for cart Id: {message.CartId} started at {DateTime.Now}");
+                        var result = await GetCartStatus(message);
+                        _logger.LogInformation($"Received cart status for cart Id: {message.CartId} started at {DateTime.Now}");
 
-                    _logger.LogInformation($"Updating cart with pricing details for cart Id: {message.CartId} started at {DateTime.Now}");
-                    await UpdateCart(message, result);
-                    _logger.LogInformation($"Updating cart with pricing details for cart Id : {message.CartId} completed at {DateTime.Now}");
-                    return;
+                        _logger.LogInformation($"Updating cart with pricing details for cart Id: {message.CartId} started at {DateTime.Now}");
+                        await UpdateCart(message, result);
+                        _logger.LogInformation($"Updating cart with pricing details for cart Id : {message.CartId} completed at {DateTime.Now}");
+                        return;
+                    }
                 }
-                //message.CartItems.ForEach(x =>
-                //{
-                //    cartItemUpdateRequest.Add(new CartItemUpdateRequest
-                //    {
-                //        CartItemId = x.CartItemId,
-                //        Currency = x.Currency,
-                //        Price = x.Price
-                //    });
-                //});
-                //using (HttpClient client = _httpClientFactory.CreateClient())
-                //{
-                //    var json = new StringContent(
-                //            JsonSerializer.Serialize(cartItemUpdateRequest, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
-                //            Encoding.UTF8,
-                //            MediaTypeNames.Application.Json);
-                //    var httpResponse = await client.PutAsync($"{_cartServiceUrl}/cart/{message.CartId}/items", json);
-                //    if (httpResponse != null && httpResponse.IsSuccessStatusCode)
-                //    {
-                //        await UpdateCart(message);
-                //        return;
-                //    }
-                //}
             });
         }
 
@@ -131,6 +93,10 @@ namespace Cart_Worker.MessageHandler
                 var updateCartResponse = await client2.PutAsync($"{_cartServiceUrl}/cart/{pricingResponse.CartId}", content);
                 if (updateCartResponse != null && updateCartResponse.IsSuccessStatusCode)
                     return;
+                else
+                {
+                    _logger.LogInformation($"API call to cart service to update the cart has failed {updateCartResponse.StatusCode}");
+                }
             }
         }
 
@@ -145,6 +111,10 @@ namespace Cart_Worker.MessageHandler
                 {
                     return result.Data;
                 }
+            }
+            else
+            {
+                _logger.LogInformation($"API call to cart service to get status has failed {httpResponse.StatusCode}");
             }
             return new CartResponse();
         }
