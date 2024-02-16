@@ -35,5 +35,6 @@ namespace Cart_Worker.Model
         public Guid CartItemId { get; set; }
         public double Price { get; set; }
         public string Currency { get; set; }
+        public int Quanity { get; set; }
     }
 }

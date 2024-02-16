@@ -10,17 +10,14 @@ namespace Pricing_Engine.Model
 {
     public class ApiResponse<T>
     {
-        public ApiResponse(T data, string statusCode, string? errorMessage = null)
+        public ApiResponse(T data, int statusCode)
         {
             Data = data;
             StatusCode = statusCode;
-            ErrorMessage = errorMessage;
         }
 
         public T Data { get; set; }
-        public string StatusCode { get; set; }
+        public int StatusCode { get; set; }
 
-        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-        public string? ErrorMessage { get; set; }
     }
 }

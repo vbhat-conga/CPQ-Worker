@@ -35,7 +35,7 @@ namespace Cart_Worker.MessageHandler
         public async Task HandleMessage(List<PricingResponse> pricingResponses, IDatabase database)
         {
             _logger.LogInformation($"started processing a message at {DateTime.Now}");
-            var cartItemUpdateRequest = new ConcurrentBag<CartItemUpdateRequest>();
+            var cartItemUpdateRequest = new ConcurrentBag<UpdateCartItemRequest>();
             await Parallel.ForEachAsync(pricingResponses, async (message, _) =>
             {
                 var parentContext = Propagator.Extract(default, message, InstrumentationHelper.ExtractTraceContextFromBasicProperties);
@@ -47,17 +47,26 @@ namespace Cart_Worker.MessageHandler
                     using HttpClient client = _httpClientFactory.CreateClient();
                     for (var i = 0; i < iteration; i++)
                     {
-                        var itemIds = message.CartItems.Skip(i * _batchSize).Take(_batchSize).Select(x => new CartItemUpdateRequest
+                        var cartItems = message.CartItems.Skip(i * _batchSize).Take(_batchSize).Select(x => new CartItemRequest
                         {
                             CartItemId = x.CartItemId,
                             Currency = x.Currency,
                             Price = x.Price,
-                        });
+                            Quantity = x.Quanity,
+
+                        }).ToList();
+
+                        var cartItemUpdateRequest = new UpdateCartItemRequest
+                        {
+                            Action = Cart_worker.Model.Action.UpdatePrice,
+                            CartItems = cartItems
+                        };
+
                         var json = new StringContent(
-                                JsonSerializer.Serialize(itemIds, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+                                JsonSerializer.Serialize(cartItemUpdateRequest, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
                                 Encoding.UTF8,
                                 MediaTypeNames.Application.Json);
-                        httpTasks.Add(client.PutAsync($"{_cartServiceUrl}/cart/{message.CartId}/items", json));
+                        httpTasks.Add(client.PatchAsync($"{_cartServiceUrl}/cart/{message.CartId}/items", json));
                     }
                     var httpResponses = await Task.WhenAll(httpTasks);
                     _logger.LogInformation($"Received a response from API for cart Id: {message.CartId} at {DateTime.Now}");
@@ -65,7 +74,7 @@ namespace Cart_Worker.MessageHandler
                     {
                         _logger.LogInformation($"Getting cart status for cart Id: {message.CartId} started at {DateTime.Now}");
                         var result = await GetCartStatus(message);
-                        _logger.LogInformation($"Received cart status for cart Id: {message.CartId} started at {DateTime.Now}");
+                        _logger.LogInformation($"Received cart status for cart Id: {result.CartId} started at {DateTime.Now}");
 
                         _logger.LogInformation($"Updating cart with pricing details for cart Id: {message.CartId} started at {DateTime.Now}");
                         await UpdateCart(message, result);
@@ -78,11 +87,16 @@ namespace Cart_Worker.MessageHandler
 
         private async Task UpdateCart(PricingResponse pricingResponse, CartResponse cartResponse)
         {
-            var cartUpdate = new CartUpdateRequest
+            if(cartResponse == null || string.IsNullOrEmpty(cartResponse.Status))
+            {
+                _logger.LogWarning($"Get cart status didn't return any data for cart Id : {pricingResponse.CartId}");
+                return;
+            }
+            var cartUpdate = new UpdateCartRequest
             {
                 CartId = pricingResponse.CartId,
                 PriceListId = pricingResponse.PriceListId,
-                StatusId = CartStatus.Priced,
+                Status = CartStatus.Priced,
                 Price = cartResponse.Price + pricingResponse.TotalPrice
             };
 
@@ -92,7 +106,9 @@ namespace Cart_Worker.MessageHandler
                 var content = new StringContent(cartJson, Encoding.UTF8, MediaTypeNames.Application.Json);
                 var updateCartResponse = await client2.PutAsync($"{_cartServiceUrl}/cart/{pricingResponse.CartId}", content);
                 if (updateCartResponse != null && updateCartResponse.IsSuccessStatusCode)
-                    return;
+                {
+                    _logger.LogInformation($"API call to cart service to update the cart is successful");
+                }
                 else
                 {
                     _logger.LogInformation($"API call to cart service to update the cart has failed {updateCartResponse.StatusCode}");
@@ -103,7 +119,7 @@ namespace Cart_Worker.MessageHandler
         private async Task<CartResponse> GetCartStatus(PricingResponse pricingResponse)
         {
             using var client = _httpClientFactory.CreateClient();
-            var httpResponse = await client.GetAsync($"{_cartServiceUrl}/cart/{pricingResponse.CartId}/status");
+            var httpResponse = await client.GetAsync($"{_cartServiceUrl}/cart/{pricingResponse.CartId}");
             if (httpResponse != null && httpResponse.IsSuccessStatusCode)
             {
                 var result= await JsonSerializer.DeserializeAsync<ApiResponse<CartResponse>>(await httpResponse.Content.ReadAsStreamAsync(), new JsonSerializerOptions(JsonSerializerDefaults.Web));

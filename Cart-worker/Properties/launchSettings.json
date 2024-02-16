@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "Cart-worker": {
+      "commandName": "Project"
+    },
+    "Docker": {
+      "commandName": "Docker"
+    }
+  }
+}

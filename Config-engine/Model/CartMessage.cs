@@ -17,33 +17,33 @@ namespace Config_engine.Worker.Model
             AdditonalInfo = new();
         }
     }
-    public class CartMessage: BaseMessage
+    public class CartMessage : BaseMessage
     {
         public Guid CartId { get; set; }
-        public IEnumerable<CartItemRequest> CartItems { get; set; }
-
+        public IEnumerable<CartItemInfo> CartItems { get; set; }
         public Guid PriceListId { get; set; }
+        public CartAction CartAction { get; set; } = CartAction.ConfigureAndPrice;
+
     }
-    public class CartItemRequest
+
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public enum CartAction
     {
-        [Required]
-        public Guid ItemId { get; set; }
-        [Required]
+        ConfigureAndPrice,
+        Price,
+        Reprice
+    }
+    public class CartItemInfo
+    {
+        public Guid CartItemId { get; set; }
         public bool IsPrimaryLine { get; set; }
-        [Required]
         public LineType LineType { get; set; }
-        [Required]
         public int Quantity { get; set; }
-
-        [Required]
-        public string ExternalId { get; set; }
-        [Required]
+        public string? ExternalId { get; set; }
         public int PrimaryTaxLineNumber { get; set; }
-        [Required]
-        public Product Product { get; set; }
-
-        [JsonIgnore]
-        public Guid CartId { get; set; }
+        public double Price { get; set; }
+        public string Currency { get; set; } 
+        public Guid ProductId { get; set; }
 
     }
 
@@ -51,12 +51,5 @@ namespace Config_engine.Worker.Model
     {
         None = 0,
         ProductService = 1
-    }
-
-    public class Product
-    {
-
-        [Required]
-        public Guid Id { get; set; }
     }
 }

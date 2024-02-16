@@ -42,54 +42,59 @@ namespace Config_engine.Worker.Messagehandler
 
         public async Task HandleMessage(List<CartMessage> cartMessage, IDatabase database)
         {
-            var productList = new ConcurrentBag<ProductData>();
+            var productList = new ConcurrentBag<GetProductResponse>();
             await Parallel.ForEachAsync(cartMessage, async (message, _) =>
             {
                 var parentContext = Propagator.Extract(default, message, InstrumentationHelper.ExtractTraceContextFromBasicProperties);
                 Baggage.Current = parentContext.Baggage;
                 using var activity = _activitySource.StartActivity(nameof(HandleMessage), ActivityKind.Internal, parentContext.ActivityContext);
                 {
-                    var cartId = message.CartId;
-                    var cartItems = message.CartItems.ToList();
-                    var iteration = Math.Ceiling((decimal)cartItems.Count / _batchSize);
-                    var httpTasks = new List<Task<HttpResponseMessage>>();
-                    _logger.LogInformation($"started processing a message  for cart Id: {message.CartId} at {DateTime.Now}");
-                    using HttpClient client = _httpClientFactory.CreateClient();
-                    for (var i = 0; i < iteration; i++)
+                    activity?.SetTag(nameof(message.CartId), message.CartId);
+                    activity?.SetTag(nameof(message.CartAction), message.CartAction);
+                    if (message.CartAction == CartAction.ConfigureAndPrice)
                     {
-                        var itemIds = cartItems.Skip(i * _batchSize).Take(_batchSize).Select(x => x.Product.Id);
-                        var json = new StringContent(
-                                JsonSerializer.Serialize(itemIds, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
-                                Encoding.UTF8,
-                                MediaTypeNames.Application.Json);
-                        httpTasks.Add(client.PostAsync($"{_adminServiceUrl}/product/query", json));
-                    }
-                    while (httpTasks.Any())
-                    {
-                        var completedTask = await Task.WhenAny(httpTasks);
-                        httpTasks.Remove(completedTask);
-
-                        var httpResponse = await completedTask;
-                        if (httpResponse != null && httpResponse.IsSuccessStatusCode)
+                        _logger.LogInformation($"started processing a message  for cart Id: {message.CartId} at {DateTime.Now} for action : {message.CartAction}");
+                        var cartId = message.CartId;
+                        var cartItems = message.CartItems.ToList();
+                        var iteration = Math.Ceiling((decimal)cartItems.Count / _batchSize);
+                        var httpTasks = new List<Task<HttpResponseMessage>>();
+                        using HttpClient client = _httpClientFactory.CreateClient();
+                        for (var i = 0; i < iteration; i++)
                         {
-                            var options = new JsonSerializerOptions
+                            var itemIds = cartItems.Skip(i * _batchSize).Take(_batchSize).Select(x => x.ProductId);
+                            var json = new StringContent(
+                                    JsonSerializer.Serialize(itemIds, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+                                    Encoding.UTF8,
+                                    MediaTypeNames.Application.Json);
+                            httpTasks.Add(client.PostAsync($"{_adminServiceUrl}/product/query", json));
+                        }
+                        while (httpTasks.Any())
+                        {
+                            var completedTask = await Task.WhenAny(httpTasks);
+                            httpTasks.Remove(completedTask);
+
+                            var httpResponse = await completedTask;
+                            if (httpResponse != null && httpResponse.IsSuccessStatusCode)
                             {
-                                Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) },
-                                PropertyNameCaseInsensitive = true
-                            };
-                            var response = await JsonSerializer.DeserializeAsync<ApiResponse<List<ProductData>>>(await httpResponse.Content.ReadAsStreamAsync(), options)!;
-                            if (response != null)
+                                var options = new JsonSerializerOptions
+                                {
+                                    Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) },
+                                    PropertyNameCaseInsensitive = true
+                                };
+                                var response = await JsonSerializer.DeserializeAsync<ApiResponse<List<GetProductResponse>>>(await httpResponse.Content.ReadAsStreamAsync(), options)!;
+                                if (response != null)
+                                {
+                                    response.Data.ForEach(x => { productList.Add(x); });
+                                }
+                            }
+                            else
                             {
-                                response.Data.ForEach(x => { productList.Add(x); });
+                                _logger.LogInformation($"API call to admin service to get products has failed");
                             }
                         }
-                        else
-                        {
-                            _logger.LogInformation($"API call to admin service has failed {httpResponse.StatusCode}");
-                        }
+                        _logger.LogInformation($"Total products {productList.Count} has been retrieved and deserialized at: {DateTime.Now}");
+                        ApplyRules(productList, message);
                     }
-                    _logger.LogInformation($"Total products {productList.Count} has been retrieved and deserialized at: {DateTime.Now}");
-                    ApplyRules(productList, message);
                     await SendToPricing(message, database);
                 }
             });
@@ -117,7 +122,7 @@ namespace Config_engine.Worker.Messagehandler
         // Not to run through every rules irrespective of configuration type.
         // We can split the number of lines and send each split of different config engine
         // provided they don't depend on each other. 
-        private void ApplyRules(ConcurrentBag<ProductData> productList, CartMessage message)
+        private void ApplyRules(ConcurrentBag<GetProductResponse> productList, CartMessage message)
         {
             using (var activity = _activitySource.StartActivity(nameof(ApplyRules), ActivityKind.Internal))
             {
@@ -129,7 +134,7 @@ namespace Config_engine.Worker.Messagehandler
             }
         }
 
-        private bool IsStandAlone(ConcurrentBag<ProductData> productList)
+        private bool IsStandAlone(ConcurrentBag<GetProductResponse> productList)
         {
             //IsPlainProduct is part or product configuration table/object.
             return productList.All(x => x.IsPlainProduct);

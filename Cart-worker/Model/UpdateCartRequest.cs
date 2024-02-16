@@ -6,10 +6,10 @@ using System.Threading.Tasks;
 
 namespace Cart_worker.Model
 {
-    internal class CartUpdateRequest
+    internal class UpdateCartRequest
     {
         public Guid CartId { get; set; }
-        public CartStatus StatusId { get; set; }
+        public CartStatus Status { get; set; }
         public double Price { get; set; }
 
         public Guid PriceListId { get; set; }

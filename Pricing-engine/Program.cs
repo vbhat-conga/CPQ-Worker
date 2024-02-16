@@ -55,7 +55,7 @@ namespace Pricing_Engine
                    .AddOtlpExporter(opts =>
                    {
                        opts.Protocol = OtlpExportProtocol.Grpc;
-                       opts.Endpoint = new Uri("http://localhost:4317/api/traces");
+                        opts.Endpoint = new Uri(hostingContext.Configuration.GetValue("Otlp:Endpoint", defaultValue:"http://localhost:4317/api/traces"));
                        opts.ExportProcessorType = ExportProcessorType.Batch;
                    })
                    .AddAspNetCoreInstrumentation()

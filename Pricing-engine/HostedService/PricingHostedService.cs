@@ -4,6 +4,7 @@ using Pricing_Engine.MessageHandler;
 using Pricing_Engine.Model;
 using StackExchange.Redis;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Pricing_Engine.HostedService
 {

@@ -1,20 +1,18 @@
 ﻿using Microsoft.Extensions.Configuration;
 using Pricing_Engine.Model;
 using StackExchange.Redis;
-using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.Linq;
 using System.Net.Mime;
 using System.Text;
 using System.Text.Json.Serialization;
 using System.Text.Json;
-using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using OpenTelemetry.Context.Propagation;
 using System.Diagnostics;
 using OpenTelemetry;
 using Pricing_Engine.Helper;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Options;
 
 namespace Pricing_Engine.MessageHandler
 {
@@ -25,6 +23,7 @@ namespace Pricing_Engine.MessageHandler
         private readonly IConfiguration _configuration;
         private readonly string _cartStream;
         private readonly string _adminServiceUrl;
+        private readonly string _cartServiceUrl;
         private readonly ILogger<PricingMessageHandler> _logger;
         private readonly ActivitySource _activitySource = new(Instrumentation.ActivitySourceName);
         private static readonly TextMapPropagator Propagator = Propagators.DefaultTextMapPropagator;
@@ -36,6 +35,7 @@ namespace Pricing_Engine.MessageHandler
             _batchSize = _configuration.GetValue<int>("BatchSize");
             _cartStream = _configuration.GetValue<string>("CartStream") ?? "cart-stream";
             _adminServiceUrl = _configuration.GetValue<string>("AdiminServiceUrl") ?? "https://localhost:7190/api";
+            _cartServiceUrl = _configuration.GetValue<string>("CartServiceUrl") ?? "https://localhost:7036/api";
             _logger = logger;
         }
         public async Task HandleMessage(List<CartMessage> cartMessage, IDatabase database)
@@ -58,7 +58,7 @@ namespace Pricing_Engine.MessageHandler
                         using HttpClient client = _httpClientFactory.CreateClient();
                         for (var i = 0; i < iteration; i++)
                         {
-                            var itemIds = cartItems.Skip(i * _batchSize).Take(_batchSize).Select(x => x.Product.Id);
+                            var itemIds = cartItems.Skip(i * _batchSize).Take(_batchSize).Select(x => x.ProductId);
                             var priceListItemRequest = new PriceListItemQuery
                             {
                                 Ids = itemIds
@@ -98,11 +98,69 @@ namespace Pricing_Engine.MessageHandler
                     _logger.LogInformation($"Pricing   for cart Id: {message.CartId} is completed at {DateTime.Now}");
                     if (priceResponse != null && priceResponse.CartItems.Any())
                     {
-                        _logger.LogInformation($"Pricing for total items {priceResponse.CartItems.Count} is done for the cart id {priceResponse.CartId}");
+                        _logger.LogInformation($"Pricing for total items {priceResponse.CartItems.Count} is done for the cart id {priceResponse.CartId} and amount is : {priceResponse.TotalPrice}");
+                        if(message.CartAction == CartAction.Reprice)
+                        {
+                           await GetCartPrice(priceResponse, message);
+                        }
                         await SendToCart(priceResponse, database);
+                    }
+                    else
+                    {
+                         _logger.LogInformation($"Pricing didn't happened for {priceResponse.CartId}");
                     }
                 }
             });
+        }
+
+        private async Task GetCartPrice(PricingResponse priceResponse, CartMessage message)
+        {
+            var newPrice = 0.0;
+            _logger.LogInformation($"Repricing for cart id {priceResponse.CartId} started at : {DateTime.Now}");
+            using (var activity = _activitySource.StartActivity(nameof(GetCartPrice), ActivityKind.Internal))
+            {
+                activity?.SetTag(nameof(message.CartAction), message.CartAction);
+                var httpTasks = new List<Task<HttpResponseMessage>>();
+                using HttpClient client = _httpClientFactory.CreateClient();
+                var iteration = Math.Ceiling((decimal)message.CartItems.Count() / _batchSize);
+                for (var i = 0; i < iteration; i++)
+                {
+                    var itemIds = message.CartItems.Skip(i * _batchSize).Take(_batchSize).Select(x => x.CartItemId);
+                    var priceListItemRequest = new LineItemQueryRequest
+                    {
+                        Ids = itemIds
+                    };
+                    var json = new StringContent(
+                            JsonSerializer.Serialize(priceListItemRequest, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+                            Encoding.UTF8,
+                            MediaTypeNames.Application.Json);
+                    httpTasks.Add(client.PostAsync($"{_cartServiceUrl}/cart/{message.CartId}/items/query", json));
+                }
+
+                var httpResponses = await Task.WhenAll(httpTasks);
+                if(httpResponses != null && httpResponses.All(x=>x.IsSuccessStatusCode))
+                {
+                    var options = new JsonSerializerOptions
+                    {
+                        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) },
+                        PropertyNameCaseInsensitive = true
+                    };
+                    var oldPrice = 0.0;
+                    foreach (var response in httpResponses)
+                    {
+                       var result = await JsonSerializer.DeserializeAsync<ApiResponse<List<CartItemInfo>>>(await response.Content.ReadAsStreamAsync(), options);
+                        if (result != null)
+                        {
+                            result.Data.ForEach(x =>
+                            {
+                                oldPrice += x.Price;
+                            });
+                        }
+                    }
+                    priceResponse.TotalPrice = priceResponse.TotalPrice - oldPrice;
+                }
+            }
+            _logger.LogInformation($"Repricing for cart id {priceResponse.CartId} completed at {DateTime.Now} and reprice amount is {priceResponse.TotalPrice}");
         }
 
 
@@ -120,7 +178,7 @@ namespace Pricing_Engine.MessageHandler
                 double totalPrice = 0.00;
                 foreach (var item in cartMessage.CartItems)
                 {
-                    var product = products.FirstOrDefault(x => x.ProductId == item.Product.Id);
+                    var product = products.FirstOrDefault(x => x.ProductId == item.ProductId);
                     if (product != null)
                     {
                         var itemPrice = item.Quantity * product.Price;
@@ -129,12 +187,13 @@ namespace Pricing_Engine.MessageHandler
                         {
                             Price = itemPrice,
                             Currency = product.Currency,
-                            CartItemId = item.ItemId
+                            CartItemId = item.CartItemId,
+                            Quanity = item.Quantity
                         });
                     }
                     else
                     {
-                        _logger.LogInformation($" Cart item: {item.ItemId} and product id {item.Product.Id} is not available");
+                        _logger.LogInformation($" Cart item: {item.CartItemId} and product id {item.ProductId} is not available");
                     }
 
                 }

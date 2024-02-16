@@ -4,9 +4,9 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace Cart_worker.Model
+namespace Cart_Worker.Model
 {
-    public class CartItemUpdateRequest
+    public class UpdateCartItemRequest
     {
         public Guid CartItemId { get; set; }
         public double Price { get; set; }
